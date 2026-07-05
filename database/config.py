@@ -21,7 +21,7 @@ engine = create_sqlmodel_engine(
     DATABASE_URL,
     connect_args={"check_same_thread": False},
     poolclass=StaticPool,
-    echo=True,  # Cambiar a True para ver las queries SQL generadas
+    echo=False,  # Cambiar a True para ver las queries SQL generadas
 )
 
 
