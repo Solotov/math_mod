@@ -2,13 +2,24 @@
 # File: main.py
 # Description: Punto de entrada
 
-# TODO: Implementar funcionalidad
+from sqlmodel import Session, select
+from sqlalchemy.orm import selectinload
 
-import sqlite3
+from database.config import engine
+from database.models import Model, ModelWithSessions
 
-# Versión de SQLite que está usando Python
-print(sqlite3.sqlite_version)
 
-# También puedes obtener información más detallada
-print(f"SQLite versión: {sqlite3.sqlite_version}")
-print(f"Versión del módulo sqlite3: {sqlite3.version}") # type: ignore
+
+with Session(engine) as session:
+
+    statement = (
+        select(Model)
+        .options(selectinload(Model.training_sessions))
+        .where(Model.id == 1)
+    )
+
+    modelo = session.exec(statement).one_or_none()
+    assert modelo is not None, "No se encontró el modelo con ID 1"
+    resultado = ModelWithSessions.model_validate(modelo)
+
+print(resultado)

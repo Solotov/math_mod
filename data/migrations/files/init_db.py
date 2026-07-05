@@ -14,6 +14,8 @@ import sys
 from pathlib import Path
 
 
+
+
 class DatabaseInitializer:
     """Gestor para inicializar la base de datos iadc"""
     
@@ -30,7 +32,7 @@ class DatabaseInitializer:
         
         self.db_path = db_path
         self.connection = None
-        self.cursor = None
+        self.cursor= None
     
     def connect(self):
         """Establece conexión con la base de datos"""
@@ -60,11 +62,10 @@ class DatabaseInitializer:
             print(f"✗ Error al leer schema.sql: {e}")
             return None
     
-    def execute_schema(self, schema):
+    def execute_schema(self, schema: str) -> bool:
         """Ejecuta el esquema SQL"""
         if not schema:
             return False
-        
         try:
             self.cursor.executescript(schema)
             self.connection.commit()

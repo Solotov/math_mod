@@ -101,7 +101,7 @@ class TrainingSession(TrainingSessionBase, table=True):
     
     # Relaciones
     modelo: Optional[Model] = Relationship(back_populates="training_sessions")
-    epochsx: List["Epoch"] = Relationship(back_populates="training_session")
+    epochs: List["Epoch"] = Relationship(back_populates="training_session")
 
 
 class TrainingSessionCreate(TrainingSessionBase):
@@ -125,7 +125,7 @@ class TrainingSessionRead(TrainingSessionBase):
 
 class TrainingSessionWithEpochs(TrainingSessionRead):
     """Schema con detalle de epochs"""
-    epochsx: List["EpochRead"] = []
+    epochs: List["EpochRead"] = []
 
 
 # ============================================================================
