@@ -348,8 +348,9 @@ class PrismCluster:
     # -- exportación CAD (STEP) -----------------------------------------------
     def export_step(self, filename: str) -> None:
         """
-        Exporta la geometría del clúster a un archivo STEP (.step o .stp)
-        usando CadQuery. Requiere que CadQuery esté instalado.
+        Exporta la geometría del clúster a un archivo STEP usando un Ensamblaje.
+        Mantiene los prismas pegados y colorea las celdas según su función estructural
+        en la red (entrada, oculta, salida).
         """
         try:
             import cadquery as cq
@@ -358,12 +359,45 @@ class PrismCluster:
                 "CadQuery no está instalado. Por favor instálelo con: pip install cadquery"
             ) from e
 
-        result = cq.Workplane("XY")
-        for cell in self.cells.values():
+        # 1. Determinar los niveles (capas) para la asignación de colores
+        levels = self.compute_levels()
+        sorted_z = list(levels.keys())
+        
+        # Mapear el ID de cada celda a su color correspondiente
+        cell_colors: dict[int, cq.Color] = {}
+        
+        for z_idx, z_val in enumerate(sorted_z):
+            is_input = (z_idx == 0)
+            is_output = (z_idx == len(sorted_z) - 1)
+            
+            # Definir colores en formato RGBA (Rojo, Verde, Azul, Opacidad)
+            # Valores entre 0.0 y 1.0
+            if is_input:
+                # Color Azul para la capa de entrada
+                layer_color = cq.Color(0.2, 0.5, 1.0, 1.0) 
+            elif is_output and len(sorted_z) > 1:
+                # Color Naranja/Rojo para la capa de salida
+                layer_color = cq.Color(1.0, 0.4, 0.1, 1.0) 
+            else:
+                # Color Verde para las capas ocultas (internas)
+                layer_color = cq.Color(0.4, 0.8, 0.4, 1.0)
+                
+            for pid in levels[z_val]:
+                cell_colors[pid] = layer_color
+
+        # 2. Crear el contenedor de ensamblaje
+        assembly = cq.Assembly()
+
+        for pid, cell in self.cells.items():
+            # Obtener el color pre-calculado, o gris por defecto si algo falla
+            color = cell_colors.get(pid, cq.Color(0.5, 0.5, 0.5, 1.0))
+            
             if isinstance(cell, Prism):
                 radius = float(cell.radius)
                 sides = int(cell.sides)
                 height = float(cell.height)
+                
+                # Construcción del prisma
                 wp = cq.Workplane("XY").polygon(sides, radius).extrude(height)
                 wp = wp.translate(
                     (
@@ -372,14 +406,20 @@ class PrismCluster:
                         float(cell.center[2]) - height / 2,
                     )
                 )
-                result = result.union(wp)
+                
+                # [OPCIONAL]: Micro-chaflán para ver mejor las juntas en el renderizado
+                # wp = wp.edges().chamfer(0.02)
+                
+                # Añadir al ensamblaje con el color especificado
+                assembly.add(wp, name=f"Prisma_{cell.id}", color=color)
+                
             elif isinstance(cell, TetrahedronCell):
-                vertices = cell.all_vertices()  # (4,3)
+                vertices = cell.all_vertices()
                 faces = [(0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3)]
                 try:
                     solid = cq.Solid.makePolyhedron(vertices.tolist(), faces)
                     wp = cq.Workplane().add(solid)
-                    result = result.union(wp)
+                    assembly.add(wp, name=f"Tetraedro_{cell.id}", color=color)
                 except Exception as e:
                     warnings.warn(f"Error al construir tetraedro {cell.id}: {e}. Se omite.")
             else:
@@ -387,9 +427,64 @@ class PrismCluster:
                     f"Celda tipo {type(cell).__name__} (id {cell.id}) no soportada para exportación STEP."
                 )
 
-        cq.exporters.export(result, filename)
-        print(f"Archivo STEP exportado a: {filename}")
+        # 3. Exportar el ensamblaje 
+        assembly.save(filename, "STEP")
+        print(f"Archivo STEP exportado correctamente (con capas coloreadas) a: {filename}")
+        
+        """
+        Exporta la geometría del clúster a un archivo STEP usando un Ensamblaje.
+        Mantiene los prismas pegados de lado a tamaño real, pero evita que se 
+        fundan en un solo bloque, permitiendo ver las juntas de conexión.
+        """
+        try:
+            import cadquery as cq
+        except ImportError as e:
+            raise ImportError(
+                "CadQuery no está instalado. Por favor instálelo con: pip install cadquery"
+            ) from e
 
+        # Crear un contenedor de ensamblaje (evita la fusión booleana de piezas)
+        assembly = cq.Assembly()
+
+        for cell in self.cells.values():
+            if isinstance(cell, Prism):
+                radius = float(cell.radius)
+                sides = int(cell.sides)
+                height = float(cell.height)
+                
+                # Construcción a tamaño real (100%) para que se peguen de lado
+                wp = cq.Workplane("XY").polygon(sides, radius).extrude(height)
+                wp = wp.translate(
+                    (
+                        float(cell.center[0]),
+                        float(cell.center[1]),
+                        float(cell.center[2]) - height / 2,
+                    )
+                )
+                
+                # [OPCIONAL]: Si quieres que las juntas de unión resalten aún más en el CAD, 
+                # puedes quitar el '#' de la línea de abajo para añadir un micro-chaflán.
+                # wp = wp.edges().chamfer(0.01)
+                
+                assembly.add(wp, name=f"Prisma_{cell.id}")
+                
+            elif isinstance(cell, TetrahedronCell):
+                vertices = cell.all_vertices()
+                faces = [(0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3)]
+                try:
+                    solid = cq.Solid.makePolyhedron(vertices.tolist(), faces)
+                    wp = cq.Workplane().add(solid)
+                    assembly.add(wp, name=f"Tetraedro_{cell.id}")
+                except Exception as e:
+                    warnings.warn(f"Error al construir tetraedro {cell.id}: {e}. Se omite.")
+            else:
+                warnings.warn(
+                    f"Celda tipo {type(cell).__name__} (id {cell.id}) no soportada para exportación STEP."
+                )
+
+        # Exportar el ensamblaje limpio (sin líneas artificiales intermedias)
+        assembly.save(filename, "STEP")
+        print(f"Archivo STEP exportado correctamente (como ensamblaje) a: {filename}")
 
 # ---------------------------------------------------------------------------
 # 5. Modelo crecible (GrowableModel)
@@ -533,74 +628,99 @@ class GrowableModel:
         return diff
 
     def _apply_growth(self, model: "torch.nn.Module", diff: Dict[str, Any]) -> "torch.nn.Module":
-        """Aplica las diferencias al modelo secuencial."""
+        """
+        Aplica las diferencias al modelo secuencial reconstruyendo la secuencia
+        de capas de forma robusta a partir de los niveles Z, evitando desfases de índices.
+        """
         import torch
         import torch.nn as nn
 
         if not isinstance(model, nn.Sequential):
             raise TypeError("Solo se soportan modelos nn.Sequential para crecimiento.")
 
-        modules = list(model.children())
+        old_modules = list(model.children())
+        
+        # 1. Detectar dinámicamente la función de activación utilizada originalmente
+        act_cls = nn.ReLU
+        for m in old_modules:
+            if not isinstance(m, nn.Linear):
+                act_cls = type(m)
+                break
 
-        # Insertar nuevas capas (de atrás hacia adelante)
-        for pos, in_feat, out_feat in diff["new_layers"]:
-            new_layer = nn.Linear(in_feat, out_feat)
-            if in_feat == out_feat:
-                new_layer.weight.data = torch.eye(in_feat)
-            else:
-                nn.init.xavier_uniform_(new_layer.weight)
-            if new_layer.bias is not None:
-                nn.init.zeros_(new_layer.bias)
-            modules.insert(pos, new_layer)
+        # 2. Mapear las capas lineales del modelo viejo a sus coordenadas Z de origen y destino
+        old_linear_layers = {}
+        linear_idx = 0
+        for m in old_modules:
+            if isinstance(m, nn.Linear):
+                # En la arquitectura vieja, la capa 'linear_idx' conecta el nivel i con el nivel i+1
+                k_from = self.architecture.layer_keys[linear_idx]
+                k_to = self.architecture.layer_keys[linear_idx + 1]
+                old_linear_layers[(k_from, k_to)] = m
+                linear_idx += 1
 
-        # Ensanchar capas existentes (de atrás hacia adelante)
+        # 3. Mapear las expansiones de neuronas asociándolas a su clave Z absoluta
+        new_arch = self.cluster.build_architecture()
+        expansions = {}
         for layer_idx, n_new, old_indices, _ in diff["expanded_layers"]:
-            if layer_idx >= len(modules):
-                continue
-            layer = modules[layer_idx]
-            if not isinstance(layer, nn.Linear):
-                warnings.warn(f"La capa {layer_idx} no es Linear, no se puede ensanchar.")
-                continue
+            key = new_arch.layer_keys[layer_idx]
+            expansions[key] = old_indices
 
-            in_features = layer.in_features
-            out_features = layer.out_features
-            new_out = out_features + n_new
+        # 4. Construir la nueva secuencia de capas procesando la nueva topología
+        new_modules = []
+        num_layers = len(new_arch.layer_keys)
 
-            weight = layer.weight.data
-            bias = layer.bias.data if layer.bias is not None else None
+        for j in range(num_layers - 1):
+            k_from = new_arch.layer_keys[j]
+            k_to = new_arch.layer_keys[j + 1]
 
-            dup_rows = weight[old_indices]
-            new_weight = torch.cat([weight, dup_rows], dim=0)
-            if bias is not None:
-                dup_bias = bias[old_indices]
-                new_bias = torch.cat([bias, dup_bias])
+            in_features = new_arch.neurons[j]
+            out_features = new_arch.neurons[j + 1]
+
+            # ESCENARIO A: La conexión entre estos dos niveles ya existía previamente
+            if (k_from, k_to) in old_linear_layers:
+                old_layer = old_linear_layers[(k_from, k_to)]
+                weight = old_layer.weight.data.clone()
+                bias = old_layer.bias.data.clone() if old_layer.bias is not None else None
+
+                # Acción 1: Si el nivel de entrada (k_from) creció -> duplicamos COLUMNAS (dim 1)
+                if k_from in expansions:
+                    old_idx_cols = expansions[k_from]
+                    dup_cols = weight[:, old_idx_cols]
+                    weight = torch.cat([weight, dup_cols], dim=1)
+
+                # Acción 2: Si el nivel de destino (k_to) creció -> duplicamos FILAS (dim 0) y SESGOS
+                if k_to in expansions:
+                    old_idx_rows = expansions[k_to]
+                    dup_rows = weight[old_idx_rows, :]
+                    weight = torch.cat([weight, dup_rows], dim=0)
+                    if bias is not None:
+                        dup_bias = bias[old_idx_rows]
+                        bias = torch.cat([bias, dup_bias])
+
+                # Instanciar la capa lineal con sus pesos quirúrgicamente expandidos
+                new_layer = nn.Linear(in_features, out_features, bias=(bias is not None))
+                new_layer.weight.data = weight
+                if bias is not None:
+                    new_layer.bias.data = bias
+
+            # ESCENARIO B: Es una conexión completamente nueva (un nivel Z nuevo fue intercalado)
             else:
-                new_bias = None
+                new_layer = nn.Linear(in_features, out_features)
+                if in_features == out_features:
+                    new_layer.weight.data = torch.eye(in_features)
+                else:
+                    nn.init.xavier_uniform_(new_layer.weight)
+                if new_layer.bias is not None:
+                    nn.init.zeros_(new_layer.bias)
 
-            new_layer = nn.Linear(in_features, new_out, bias=(bias is not None))
-            new_layer.weight.data = new_weight
-            if new_bias is not None:
-                new_layer.bias.data = new_bias
+            new_modules.append(new_layer)
 
-            modules[layer_idx] = new_layer
+            # Añadir la capa de activación intermedia siempre que no sea el final de la red
+            if j < num_layers - 2:
+                new_modules.append(act_cls())
 
-            # Actualizar la siguiente capa (si existe)
-            if layer_idx + 1 < len(modules):
-                next_layer = modules[layer_idx + 1]
-                if isinstance(next_layer, nn.Linear):
-                    old_in = next_layer.in_features
-                    old_out = next_layer.out_features
-                    weight_next = next_layer.weight.data
-                    dup_cols = weight_next[:, old_indices]
-                    new_weight_next = torch.cat([weight_next, dup_cols], dim=1)
-                    new_next = nn.Linear(new_out, old_out, bias=(next_layer.bias is not None))
-                    new_next.weight.data = new_weight_next
-                    if next_layer.bias is not None:
-                        new_next.bias.data = next_layer.bias.data
-                    modules[layer_idx + 1] = new_next
-
-        return nn.Sequential(*modules)
-
+        return nn.Sequential(*new_modules)
+    
     def _update_optimizer(self, diff: Dict[str, Any]) -> None:
         """Actualiza el optimizador para incluir nuevos parámetros, preservando el estado."""
         if self._optimizer is None:
@@ -741,13 +861,10 @@ if __name__ == "__main__":
 
         if (epoch + 1) % 5 == 0:
             print(f"\n--- Crecimiento en época {epoch+1} ---")
-            D = hex_neighbor((B[0], B[1], 1.0), 330, radius=R)
-            # CORRECCIÓN: pasar D como primer argumento posicional
+            # Cambiar el ángulo en cada iteración para que no se solapen
+            angle = 330 + (epoch * 20) 
+            D = hex_neighbor((B[0], B[1], 1.0), angle, radius=R)
             new_model, new_arch = growable.grow(D, radius=R, height=1.0, sides=6)
-            model = new_model
-            print("Nueva arquitectura:")
-            print(new_arch.summary())
-            print("Optimizador actualizado.\n")
 
     print("\nModelo final:")
     print(model)
