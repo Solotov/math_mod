@@ -728,7 +728,7 @@ if __name__ == "__main__":
         print(f"Exportación STEP omitida: {e}")
 
     # --- Crear modelo PyTorch ---
-    model = arch.to_pytorch()
+    model = arch.to_pytorch()   
     print("\nModelo inicial:")
     print(model)
 
