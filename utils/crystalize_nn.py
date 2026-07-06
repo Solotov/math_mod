@@ -43,8 +43,8 @@ from __future__ import annotations
 import itertools
 import warnings
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple, Union
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import numpy as np
 
@@ -55,6 +55,7 @@ import numpy as np
 
 class GeometricCell(ABC):
     """Interfaz para cualquier figura que pueda colocarse en el cristal."""
+
     id: int
     center: np.ndarray
 
@@ -71,11 +72,11 @@ class GeometricCell(ABC):
 @dataclass
 class Prism(GeometricCell):
     id: int
-    center: np.ndarray          # [x, y, z]
-    radius: float = 1.0         # radio de la base (circunferencia circunscrita)
-    height: float = 1.0         # altura del prisma
-    rotation: float = 0.0       # rotación en radianes alrededor del eje Z
-    sides: int = 6              # nº de lados de la base (6 = hexagonal)
+    center: np.ndarray  # [x, y, z]
+    radius: float = 1.0  # radio de la base (circunferencia circunscrita)
+    height: float = 1.0  # altura del prisma
+    rotation: float = 0.0  # rotación en radianes alrededor del eje Z
+    sides: int = 6  # nº de lados de la base (6 = hexagonal)
 
     def _ring_vertices(self, z: float) -> np.ndarray:
         angles = self.rotation + 2 * np.pi * np.arange(self.sides) / self.sides
@@ -106,14 +107,15 @@ class TetrahedronCell(GeometricCell):
 
     def all_vertices(self) -> np.ndarray:
         # Tetraedro regular centrado en `center` con arista `scale`
-        # Vértices de un tetraedro regular con centro en origen
         s = self.scale / np.sqrt(6)  # para que la arista sea scale
-        vertices = np.array([
-            [1, 1, 1],
-            [1, -1, -1],
-            [-1, 1, -1],
-            [-1, -1, 1]
-        ]) * s
+        vertices = np.array(
+            [
+                [1, 1, 1],
+                [1, -1, -1],
+                [-1, 1, -1],
+                [-1, -1, 1],
+            ]
+        ) * s
         return vertices + self.center
 
 
@@ -123,15 +125,14 @@ class TetrahedronCell(GeometricCell):
 
 @dataclass
 class CrystalArchitecture:
-    layer_keys: List[float]                 # clave de nivel (p.ej. Z redondeada)
-    neurons: List[int]                      # nº de neuronas por capa
+    layer_keys: List[float]  # clave de nivel (p.ej. Z redondeada)
+    neurons: List[int]  # nº de neuronas por capa
     layer_vertices: List[Set[Tuple[float, float, float]]]  # vértices únicos por capa
-    layer_prism_ids: List[List[int]]        # qué prismas componen cada capa
-    coordinates: Dict[int, List[float]]     # centro de cada prisma
-    adjacency: Dict[int, List[int]]         # grafo de uniones entre prismas
-    propagation_order: List[int]            # orden de recorrido (horario, radial)
+    layer_prism_ids: List[List[int]]  # qué prismas componen cada capa
+    coordinates: Dict[int, List[float]]  # centro de cada prisma
+    adjacency: Dict[int, List[int]]  # grafo de uniones entre prismas
+    propagation_order: List[int]  # orden de recorrido (horario, radial)
 
-    # -- utilidades de lectura -------------------------------------------------
     @property
     def n_layers(self) -> int:
         return len(self.neurons)
@@ -151,19 +152,24 @@ class CrystalArchitecture:
     def summary(self) -> str:
         lines = ["Arquitectura derivada del cristal", "=" * 34]
         lines.append(f"Total de capas: {self.n_layers}")
-        lines.append(f"Capa de entrada : {self.input_size} neuronas "
-                      f"(nivel z={self.layer_keys[0]}, prismas={self.layer_prism_ids[0]})")
+        lines.append(
+            f"Capa de entrada : {self.input_size} neuronas "
+            f"(nivel z={self.layer_keys[0]}, prismas={self.layer_prism_ids[0]})"
+        )
         for i, n in enumerate(self.hidden_sizes, start=1):
             z = self.layer_keys[i]
             pids = self.layer_prism_ids[i]
-            lines.append(f"Capa oculta {i:<2}: {n} neuronas (nivel z={z}, prismas={pids})")
-        lines.append(f"Capa de salida  : {self.output_size} neuronas "
-                      f"(nivel z={self.layer_keys[-1]}, prismas={self.layer_prism_ids[-1]})")
+            lines.append(
+                f"Capa oculta {i:<2}: {n} neuronas (nivel z={z}, prismas={pids})"
+            )
+        lines.append(
+            f"Capa de salida  : {self.output_size} neuronas "
+            f"(nivel z={self.layer_keys[-1]}, prismas={self.layer_prism_ids[-1]})"
+        )
         lines.append(f"Orden de propagación (ids de prisma): {self.propagation_order}")
         return "\n".join(lines)
 
-    # -- compiladores a frameworks --------------------------------------------
-    def to_pytorch(self, activation: str = "relu"):
+    def to_pytorch(self, activation: str = "relu") -> "torch.nn.Sequential":
         """Compila la arquitectura a un nn.Sequential de PyTorch."""
         import torch.nn as nn
 
@@ -178,7 +184,7 @@ class CrystalArchitecture:
         modules = []
         for i in range(len(self.neurons) - 1):
             modules.append(nn.Linear(self.neurons[i], self.neurons[i + 1]))
-            if i < len(self.neurons) - 2:   # sin activación tras la última capa
+            if i < len(self.neurons) - 2:  # sin activación tras la última capa
                 modules.append(act_cls())
         return nn.Sequential(*modules)
 
@@ -193,15 +199,15 @@ class CrystalArchitecture:
 
 class PrismCluster:
     """
-    Contenedor de prismas que permite:
-      - añadir prismas en cualquier posición,
+    Contenedor de celdas geométricas que permite:
+      - añadir prismas o cualquier GeometricCell,
       - calcular la adyacencia (uniones) entre ellos,
       - calcular los niveles/capas,
       - calcular el orden de propagación,
       - construir (y recalcular) la CrystalArchitecture resultante.
     """
 
-    def __init__(self, vertex_round_decimals: int = 4, z_round_decimals: int = 3):
+    def __init__(self, vertex_round_decimals: int = 4, z_round_decimals: int = 3) -> None:
         self.cells: Dict[int, GeometricCell] = {}
         self._next_id = 0
         self.vertex_round_decimals = vertex_round_decimals
@@ -210,39 +216,40 @@ class PrismCluster:
     # -- construcción -----------------------------------------------------
     def add_prism(
         self,
-        center,
+        center: Union[Tuple[float, float, float], List[float], np.ndarray],
         radius: float = 1.0,
         height: float = 1.0,
         rotation: float = 0.0,
         sides: int = 6,
         warn_if_disconnected: bool = True,
     ) -> int:
-        """
-        Añade un prisma (o cualquier GeometricCell) al clúster.
-        Si el primer argumento es una instancia de GeometricCell, se añade directamente.
-        En caso contrario, crea un Prism con los parámetros dados.
-        Devuelve el id de la celda añadida.
-        """
-        if isinstance(center, GeometricCell):
-            cell = center
-            # Si la celda no tiene id, se le asigna uno
-            if cell.id is None:
-                cell.id = self._next_id
-            pid = cell.id
-            self.cells[pid] = cell
-            self._next_id = max(self._next_id, pid + 1)
-        else:
-            pid = self._next_id
-            prism = Prism(pid, np.array(center, dtype=float), radius, height, rotation, sides)
-            self.cells[pid] = prism
-            self._next_id += 1
+        """Añade un prisma al clúster y devuelve su id."""
+        pid = self._next_id
+        self._next_id += 1
+        prism = Prism(pid, np.array(center, dtype=float), radius, height, rotation, sides)
+        self.cells[pid] = prism
+        self._check_connection(pid, warn_if_disconnected)
+        return pid
 
-        if warn_if_disconnected and len(self.cells) > 1:
+    def add_cell(self, cell: GeometricCell, warn_if_disconnected: bool = True) -> int:
+        """Añade una celda ya creada (debe tener id) al clúster."""
+        if cell.id is None:  # type: ignore[attr-defined]
+            cell.id = self._next_id
+            self._next_id += 1
+        pid = cell.id
+        self.cells[pid] = cell
+        self._next_id = max(self._next_id, pid + 1)
+        self._check_connection(pid, warn_if_disconnected)
+        return pid
+
+    def _check_connection(self, pid: int, warn: bool) -> None:
+        if warn and len(self.cells) > 1:
             adjacency = self.compute_adjacency()
             if not adjacency.get(pid):
-                print(f"[aviso] La celda {pid} en {tuple(center)} no comparte arista "
-                      f"con ninguna otra celda del grupo (queda aislada).")
-        return pid
+                print(
+                    f"[aviso] La celda {pid} en {tuple(self.cells[pid].center)} "
+                    "no comparte arista con ninguna otra celda del grupo (queda aislada)."
+                )
 
     def remove_cell(self, pid: int) -> None:
         self.cells.pop(pid, None)
@@ -256,7 +263,7 @@ class PrismCluster:
         Dos celdas son vecinas ("unidas") si comparten al menos 2 vértices
         (es decir, una arista), dentro de la tolerancia de redondeo.
         """
-        vertex_map: Dict[Tuple, List[int]] = {}
+        vertex_map: Dict[Tuple[float, float, float], List[int]] = {}
         for pid, cell in self.cells.items():
             for v in cell.all_vertices():
                 key = self._vertex_key(v)
@@ -268,7 +275,7 @@ class PrismCluster:
             for a, b in itertools.combinations(unique_pids, 2):
                 shared_count[(a, b)] = shared_count.get((a, b), 0) + 1
 
-        adjacency: Dict[int, set] = {pid: set() for pid in self.cells}
+        adjacency: Dict[int, Set[int]] = {pid: set() for pid in self.cells}
         for (a, b), count in shared_count.items():
             if count >= 2:
                 adjacency[a].add(b)
@@ -296,6 +303,7 @@ class PrismCluster:
 
         order: List[int] = []
         for _, pids in levels.items():
+            # Ordenar en sentido horario (ángulo negativo)
             def angle_key(pid: int) -> float:
                 dx, dy = self.cells[pid].center[:2] - centroid_xy
                 angle = np.arctan2(dy, dx)
@@ -316,7 +324,7 @@ class PrismCluster:
 
         layer_keys, neurons, layer_vertices, layer_prism_ids = [], [], [], []
         for z, pids in levels.items():
-            vertex_set = set()
+            vertex_set: Set[Tuple[float, float, float]] = set()
             for pid in pids:
                 for v in self.cells[pid].all_vertices():
                     vertex_set.add(self._vertex_key(v))
@@ -345,32 +353,33 @@ class PrismCluster:
         """
         try:
             import cadquery as cq
-        except ImportError:
+        except ImportError as e:
             raise ImportError(
                 "CadQuery no está instalado. Por favor instálelo con: pip install cadquery"
-            )
+            ) from e
 
         result = cq.Workplane("XY")
         for cell in self.cells.values():
             if isinstance(cell, Prism):
-                # Crear polígono base (en el plano XY, centro en origen)
-                angles = cell.rotation + 2 * np.pi * np.arange(cell.sides) / cell.sides
-                pts = [(cell.radius * np.cos(a), cell.radius * np.sin(a)) for a in angles]
-                wp = cq.Workplane("XY").polygon(pts).extrude(cell.height)
-                # Trasladar para que el centro del prisma coincida con cell.center
-                # (la base inferior está en cell.center[2] - height/2)
+                radius = float(cell.radius)
+                sides = int(cell.sides)
+                height = float(cell.height)
+                wp = cq.Workplane("XY").polygon(sides, radius).extrude(height)
                 wp = wp.translate(
-                    (cell.center[0], cell.center[1], cell.center[2] - cell.height / 2)
+                    (
+                        float(cell.center[0]),
+                        float(cell.center[1]),
+                        float(cell.center[2]) - height / 2,
+                    )
                 )
                 result = result.union(wp)
             elif isinstance(cell, TetrahedronCell):
-                # Obtener vértices (4 puntos) y caras triangulares
                 vertices = cell.all_vertices()  # (4,3)
-                # Orden de caras para un tetraedro: (0,1,2), (0,1,3), (0,2,3), (1,2,3)
                 faces = [(0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3)]
                 try:
                     solid = cq.Solid.makePolyhedron(vertices.tolist(), faces)
-                    result = result.union(solid)
+                    wp = cq.Workplane().add(solid)
+                    result = result.union(wp)
                 except Exception as e:
                     warnings.warn(f"Error al construir tetraedro {cell.id}: {e}. Se omite.")
             else:
@@ -378,7 +387,6 @@ class PrismCluster:
                     f"Celda tipo {type(cell).__name__} (id {cell.id}) no soportada para exportación STEP."
                 )
 
-        # Exportar al archivo
         cq.exporters.export(result, filename)
         print(f"Archivo STEP exportado a: {filename}")
 
@@ -393,33 +401,40 @@ class GrowableModel:
     permitiendo crecer la red añadiendo nuevos prismas sin perder lo aprendido.
     """
 
-    def __init__(self, cluster: PrismCluster, architecture: CrystalArchitecture,
-                 model: Optional['torch.nn.Module'] = None):
-        """
-        Args:
-            cluster: el clúster geométrico actual.
-            architecture: la arquitectura derivada del clúster.
-            model: modelo PyTorch (opcional). Si no se da, se construye con
-                   `architecture.to_pytorch()`.
-        """
+    def __init__(
+        self,
+        cluster: PrismCluster,
+        architecture: CrystalArchitecture,
+        model: Optional["torch.nn.Module"] = None,
+    ) -> None:
         self.cluster = cluster
         self.architecture = architecture
         if model is None:
             model = architecture.to_pytorch()
         self.model = model
-        self._optimizer = None  # se puede asignar después con attach_optimizer
+        self._optimizer = None
 
-    def attach_optimizer(self, optimizer: 'torch.optim.Optimizer'):
+    def attach_optimizer(self, optimizer: "torch.optim.Optimizer") -> None:
         """Asocia un optimizador al modelo actual."""
         self._optimizer = optimizer
 
-    def grow(self, new_cell_or_params, **kwargs) -> Tuple['torch.nn.Module', CrystalArchitecture]:
+    def grow(
+        self,
+        new_cell_or_params: Union[GeometricCell, Tuple[float, float, float], List[float], np.ndarray],
+        **kwargs,
+    ) -> Tuple["torch.nn.Module", CrystalArchitecture]:
         """
         Añade una nueva celda al clúster y actualiza el modelo preservando la función.
         Devuelve (nuevo_modelo, nueva_arquitectura).
+
+        Ejemplo de uso:
+            model, arch = growable.grow((0,0,1), radius=1.0, height=1.0, sides=6)
         """
         # 1. Añadir la celda al clúster
-        pid = self.cluster.add_prism(new_cell_or_params, **kwargs)
+        if isinstance(new_cell_or_params, GeometricCell):
+            pid = self.cluster.add_cell(new_cell_or_params, warn_if_disconnected=False)
+        else:
+            pid = self.cluster.add_prism(new_cell_or_params, **kwargs)
 
         # 2. Calcular nueva arquitectura
         new_arch = self.cluster.build_architecture()
@@ -434,104 +449,112 @@ class GrowableModel:
 
         # 5. Si hay optimizador, actualizarlo
         if self._optimizer is not None:
-            self._update_optimizer()
+            self._update_optimizer(diff)
 
         return new_model, new_arch
 
-    def _compute_diff(self, old_arch: CrystalArchitecture,
-                      new_arch: CrystalArchitecture) -> Dict:
+    def _compute_diff(
+        self, old_arch: CrystalArchitecture, new_arch: CrystalArchitecture
+    ) -> Dict[str, Any]:
         """
         Compara dos arquitecturas y devuelve un diccionario con las diferencias.
+
+        Estructura del diff:
+            'new_layers': [(posición, in_features, out_features)]
+            'expanded_layers': [(posición, n_new, old_indices, new_indices)]
+            'unchanged': [posiciones de capas sin cambios]
         """
-        diff = {
-            'new_layers': [],       # índices donde se insertan nuevas capas
-            'expanded_layers': [],  # (índice, nuevas_neuronas, índices_antiguos_a_duplicar)
-            'unchanged': []
+        diff: Dict[str, Any] = {
+            "new_layers": [],
+            "expanded_layers": [],
+            "unchanged": [],
         }
 
-        # Comparar capas por clave Z (asumimos que las claves están ordenadas)
         old_keys = old_arch.layer_keys
         new_keys = new_arch.layer_keys
 
-        # Si hay nuevas claves (capas insertadas)
-        # (asumimos que solo se añaden, no se eliminan)
         old_set = set(old_keys)
         new_set = set(new_keys)
         added_keys = sorted(new_set - old_set)
-        # Ubicar en qué posiciones aparecen
-        for key in added_keys:
-            idx = new_keys.index(key)
-            diff['new_layers'].append(idx)
 
-        # Para capas existentes, comparar conjuntos de vértices
-        old_vertices = old_arch.layer_vertices
-        new_vertices = new_arch.layer_vertices
-        # Mapeo de clave a índice en la nueva
         key_to_idx_new = {k: i for i, k in enumerate(new_keys)}
-        for i, (old_key, old_vert_set) in enumerate(zip(old_keys, old_vertices)):
-            if old_key not in key_to_idx_new:
-                # Esta capa desapareció (no debería ocurrir)
-                warnings.warn(f"La capa con clave {old_key} ha desaparecido.")
-                continue
-            j = key_to_idx_new[old_key]
-            new_vert_set = new_vertices[j]
-            if new_vert_set == old_vert_set:
-                diff['unchanged'].append(j)
+        key_to_idx_old = {k: i for i, k in enumerate(old_keys)}
+
+        # Capas nuevas
+        for key in added_keys:
+            pos = new_keys.index(key)
+            n_neurons = new_arch.neurons[pos]
+            if pos == 0:
+                in_feat = new_arch.neurons[0]
+            else:
+                in_feat = new_arch.neurons[pos - 1]
+            if pos == len(new_arch.neurons) - 1:
+                out_feat = new_arch.neurons[-1]
+            else:
+                out_feat = new_arch.neurons[pos + 1]
+            diff["new_layers"].append((pos, in_feat, out_feat))
+
+        # Capas existentes
+        common_keys = old_set & new_set
+        for key in sorted(common_keys):
+            old_idx = key_to_idx_old[key]
+            new_idx = key_to_idx_new[key]
+            old_vert_set = old_arch.layer_vertices[old_idx]
+            new_vert_set = new_arch.layer_vertices[new_idx]
+
+            if old_vert_set == new_vert_set:
+                diff["unchanged"].append(new_idx)
             elif old_vert_set.issubset(new_vert_set):
-                # Ensanchamiento
-                added_vertices = new_vert_set - old_vert_set
-                n_new = len(added_vertices)
-                # Elegir neuronas antiguas a duplicar (aleatoriamente, o la última)
-                # Para simplicidad, duplicamos las últimas `n_new` neuronas de la capa
-                old_neuron_indices = list(range(len(old_vert_set)))
-                # Ordenamos los vértices para tener un orden determinista
+                new_vertices = list(new_vert_set - old_vert_set)
                 old_vert_list = sorted(old_vert_set)
                 new_vert_list = sorted(new_vert_set)
-                # Índices de neuronas nuevas en la nueva capa (posiciones finales)
-                # (asumimos que las nuevas se añaden al final)
-                # Para saber qué índices corresponden a las nuevas, comparar las listas
-                # (asumimos que el orden es consistente)
-                # En una implementación real, necesitaríamos un mapeo estable.
-                # Aquí, simplemente duplicamos las últimas n_new neuronas.
-                n_old = len(old_vert_list)
-                n_new_total = len(new_vert_list)
-                # Los índices de las nuevas neuronas son n_old .. n_new_total-1
-                new_indices = list(range(n_old, n_new_total))
-                # Decidir qué neuronas antiguas duplicar (por ejemplo, las últimas n_new)
-                old_indices_to_duplicate = list(range(n_old - n_new, n_old))
-                diff['expanded_layers'].append((j, n_new, old_indices_to_duplicate))
-            else:
-                # Caso complejo: ni subconjunto ni superconjunto (no debería ocurrir)
-                warnings.warn(f"Cambio no trivial en capa {old_key}. No se maneja.")
-                diff['unchanged'].append(j)
 
-        # Ordenar expanded_layers por índice para aplicar de derecha a izquierda
-        diff['expanded_layers'].sort(key=lambda x: x[0], reverse=True)
-        diff['new_layers'].sort(reverse=True)
+                old_centroids = [np.array(v) for v in old_vert_list]
+                old_indices_to_duplicate = []
+                new_indices = []
+                for nv in new_vertices:
+                    nv_arr = np.array(nv)
+                    dists = [np.linalg.norm(nv_arr - old_c) for old_c in old_centroids]
+                    closest_old_idx = int(np.argmin(dists))
+                    old_indices_to_duplicate.append(closest_old_idx)
+                    new_idx_in_layer = new_vert_list.index(nv)
+                    new_indices.append(new_idx_in_layer)
+
+                diff["expanded_layers"].append(
+                    (new_idx, len(new_vertices), old_indices_to_duplicate, new_indices)
+                )
+            else:
+                warnings.warn(f"Cambio no trivial en capa con clave {key}. No se maneja.")
+                diff["unchanged"].append(new_idx)
+
+        diff["expanded_layers"].sort(key=lambda x: x[0], reverse=True)
+        diff["new_layers"].sort(key=lambda x: x[0], reverse=True)
 
         return diff
 
-    def _apply_growth(self, model: 'torch.nn.Module',
-                      diff: Dict) -> 'torch.nn.Module':
-        """
-        Aplica las diferencias al modelo secuencial.
-        """
+    def _apply_growth(self, model: "torch.nn.Module", diff: Dict[str, Any]) -> "torch.nn.Module":
+        """Aplica las diferencias al modelo secuencial."""
+        import torch
         import torch.nn as nn
+
         if not isinstance(model, nn.Sequential):
             raise TypeError("Solo se soportan modelos nn.Sequential para crecimiento.")
 
         modules = list(model.children())
 
-        # 1. Insertar nuevas capas (si las hay)
-        for idx in diff['new_layers']:
-            # No implementado: lanzar error
-            raise NotImplementedError("Inserción de capas no implementada aún.")
+        # Insertar nuevas capas (de atrás hacia adelante)
+        for pos, in_feat, out_feat in diff["new_layers"]:
+            new_layer = nn.Linear(in_feat, out_feat)
+            if in_feat == out_feat:
+                new_layer.weight.data = torch.eye(in_feat)
+            else:
+                nn.init.xavier_uniform_(new_layer.weight)
+            if new_layer.bias is not None:
+                nn.init.zeros_(new_layer.bias)
+            modules.insert(pos, new_layer)
 
-        # 2. Ensanchar capas existentes (aplicar de atrás hacia adelante)
-        for layer_idx, n_new, old_indices in diff['expanded_layers']:
-            # La capa layer_idx es un Linear (y la siguiente también puede ser Linear)
-            # Modificar la capa layer_idx (out_features aumenta)
-            # y la capa layer_idx+1 (in_features aumenta, si existe)
+        # Ensanchar capas existentes (de atrás hacia adelante)
+        for layer_idx, n_new, old_indices, _ in diff["expanded_layers"]:
             if layer_idx >= len(modules):
                 continue
             layer = modules[layer_idx]
@@ -539,18 +562,14 @@ class GrowableModel:
                 warnings.warn(f"La capa {layer_idx} no es Linear, no se puede ensanchar.")
                 continue
 
-            # Obtener dimensiones
             in_features = layer.in_features
             out_features = layer.out_features
             new_out = out_features + n_new
 
-            # Duplicar pesos y bias de las neuronas seleccionadas
-            weight = layer.weight.data  # (out, in)
+            weight = layer.weight.data
             bias = layer.bias.data if layer.bias is not None else None
 
-            # Elegir filas a duplicar (las que corresponden a old_indices)
-            # Duplicamos esas filas y las añadimos al final
-            dup_rows = weight[old_indices]  # (n_new, in)
+            dup_rows = weight[old_indices]
             new_weight = torch.cat([weight, dup_rows], dim=0)
             if bias is not None:
                 dup_bias = bias[old_indices]
@@ -563,89 +582,65 @@ class GrowableModel:
             if new_bias is not None:
                 new_layer.bias.data = new_bias
 
-            # Reemplazar la capa en la lista
             modules[layer_idx] = new_layer
 
-            # Ahora actualizar la siguiente capa (si existe) para que tenga in_features = new_out
+            # Actualizar la siguiente capa (si existe)
             if layer_idx + 1 < len(modules):
                 next_layer = modules[layer_idx + 1]
                 if isinstance(next_layer, nn.Linear):
-                    # Aumentar sus in_features
                     old_in = next_layer.in_features
                     old_out = next_layer.out_features
-                    # Duplicar columnas correspondientes a las neuronas duplicadas
-                    weight_next = next_layer.weight.data  # (out, old_in)
-                    # Las columnas a duplicar son las mismas old_indices
-                    # (porque corresponden a las neuronas de salida de la capa anterior)
-                    dup_cols = weight_next[:, old_indices]  # (out, n_new)
+                    weight_next = next_layer.weight.data
+                    dup_cols = weight_next[:, old_indices]
                     new_weight_next = torch.cat([weight_next, dup_cols], dim=1)
-                    # El bias no cambia
                     new_next = nn.Linear(new_out, old_out, bias=(next_layer.bias is not None))
                     new_next.weight.data = new_weight_next
                     if next_layer.bias is not None:
                         new_next.bias.data = next_layer.bias.data
                     modules[layer_idx + 1] = new_next
 
-        # Reconstruir el Sequential
-        new_model = nn.Sequential(*modules)
-        return new_model
+        return nn.Sequential(*modules)
 
-    def _update_optimizer(self):
-        """
-        Actualiza el optimizador asociado para incluir los nuevos parámetros,
-        preservando el estado de los parámetros antiguos.
-        """
+    def _update_optimizer(self, diff: Dict[str, Any]) -> None:
+        """Actualiza el optimizador para incluir nuevos parámetros, preservando el estado."""
         if self._optimizer is None:
             return
 
         import torch
+
         old_optimizer = self._optimizer
         old_state = old_optimizer.state_dict()
 
-        # Crear un nuevo optimizador con los mismos hiperparámetros
         new_optimizer = type(old_optimizer)(
             self.model.parameters(),
-            **{k: v for k, v in old_optimizer.defaults.items() if k != 'params'}
+            **{k: v for k, v in old_optimizer.defaults.items() if k != "params"},
         )
 
-        # Intentar cargar el estado antiguo para los parámetros que coincidan
-        # Nota: esto funciona si los parámetros tienen los mismos nombres
-        # o si están en el mismo orden. Como hemos modificado el modelo,
-        # los parámetros nuevos aparecerán al final.
-        # Tomamos el estado del nuevo optimizador (vacío) y lo fusionamos.
         new_state = new_optimizer.state_dict()
-        # Las claves de 'state' son números de índice que corresponden a los
-        # parámetros en el orden actual. Para mapear, usamos los id de los tensores.
-        old_params = list(old_optimizer.param_groups[0]['params'])
-        new_params = list(new_optimizer.param_groups[0]['params'])
+        old_params = list(old_optimizer.param_groups[0]["params"])
+        new_params = list(new_optimizer.param_groups[0]["params"])
 
-        # Construir un mapeo de id de tensor antiguo a su estado
-        old_state_dict = old_state['state']
+        old_state_dict = old_state["state"]
         id_to_state = {}
         for idx, p in enumerate(old_params):
             if idx in old_state_dict:
                 id_to_state[id(p)] = old_state_dict[idx]
 
-        # Ahora, para cada nuevo parámetro, si su id está en id_to_state, copiamos
-        # el estado; si no, lo inicializamos a ceros (o a un estado por defecto)
         new_state_dict = {}
         for idx, p in enumerate(new_params):
             if id(p) in id_to_state:
                 new_state_dict[idx] = id_to_state[id(p)]
             else:
-                # Inicializar estado (exp, exp_avg, etc.) a cero
-                # Depende del optimizador; para Adam, por ejemplo:
                 if isinstance(old_optimizer, torch.optim.Adam):
                     new_state_dict[idx] = {
-                        'step': 0,
-                        'exp_avg': torch.zeros_like(p),
-                        'exp_avg_sq': torch.zeros_like(p),
+                        "step": 0,
+                        "exp_avg": torch.zeros_like(p),
+                        "exp_avg_sq": torch.zeros_like(p),
                     }
                 else:
-                    # Fallback: estado vacío
                     new_state_dict[idx] = {}
 
-        new_state['state'] = new_state_dict
+        new_state["state"] = new_state_dict
         new_optimizer.load_state_dict(new_state)
         self._optimizer = new_optimizer
 
@@ -656,12 +651,12 @@ class GrowableModel:
 
 class GrowthPolicy:
     """Decide cuándo y cómo crecer basado en métricas de entrenamiento."""
-    def __init__(self, growable: GrowableModel, patience: int = 10,
-                 min_delta: float = 1e-4):
+
+    def __init__(self, growable: GrowableModel, patience: int = 10, min_delta: float = 1e-4) -> None:
         self.growable = growable
         self.patience = patience
         self.min_delta = min_delta
-        self.best_loss = float('inf')
+        self.best_loss = float("inf")
         self.counter = 0
 
     def step(self, loss: float) -> bool:
@@ -670,23 +665,19 @@ class GrowthPolicy:
             self.best_loss = loss
             self.counter = 0
             return False
-        else:
-            self.counter += 1
-            if self.counter >= self.patience:
-                self.counter = 0
-                return True
-            return False
+        self.counter += 1
+        if self.counter >= self.patience:
+            self.counter = 0
+            return True
+        return False
 
 
 # ---------------------------------------------------------------------------
 # 7. Demo / ejemplo de uso
 # ---------------------------------------------------------------------------
 
-def hex_neighbor(center: Tuple[float, float, float], angle_deg: float, radius: float = 1.0):
-    """
-    Devuelve el centro de un hexágono regular (circunradio `radius`) que
-    comparte una arista con `center`, en la dirección `angle_deg`.
-    """
+def hex_neighbor(center: Tuple[float, float, float], angle_deg: float, radius: float = 1.0) -> Tuple[float, float, float]:
+    """Devuelve el centro de un hexágono vecino en la dirección dada."""
     d = radius * np.sqrt(3)
     a = np.radians(angle_deg)
     return (center[0] + d * np.cos(a), center[1] + d * np.sin(a), center[2])
@@ -701,7 +692,6 @@ if __name__ == "__main__":
     cluster = PrismCluster()
     R = 1.0
 
-    # Nivel 0 (entrada): 3 prismas hexagonales mutuamente unidos por arista, en z=0
     A = (0.0, 0.0, 0.0)
     B = hex_neighbor(A, 30, radius=R)
     C = hex_neighbor(A, 90, radius=R)
@@ -709,11 +699,9 @@ if __name__ == "__main__":
     cluster.add_prism(center=B, radius=R, height=1.0, sides=6)
     cluster.add_prism(center=C, radius=R, height=1.0, sides=6)
 
-    # Nivel 1: 2 prismas apilados directamente sobre B y C (z=1)
     cluster.add_prism(center=(B[0], B[1], 1.0), radius=R, height=1.0, sides=6)
     cluster.add_prism(center=(C[0], C[1], 1.0), radius=R, height=1.0, sides=6)
 
-    # Nivel 2 (salida): 1 prisma apilado sobre el anterior (z=2)
     cluster.add_prism(center=(B[0], B[1], 2.0), radius=R, height=1.0, sides=6)
 
     arch = cluster.build_architecture()
@@ -721,31 +709,28 @@ if __name__ == "__main__":
     print()
     print("Especificación de capas (in, out):", arch.to_layer_spec())
 
-    # --- Exportar a STEP (si CadQuery está instalado) ---
+    # --- Exportar a STEP (opcional) ---
     try:
         cluster.export_step("crystal_initial.step")
     except ImportError as e:
         print(f"Exportación STEP omitida: {e}")
 
     # --- Crear modelo PyTorch ---
-    model = arch.to_pytorch()   
+    model = arch.to_pytorch()
     print("\nModelo inicial:")
     print(model)
 
     # --- Simular entrenamiento y crecimiento ---
-    # Creamos un GrowableModel
     growable = GrowableModel(cluster, arch, model)
     optimizer = optim.Adam(model.parameters(), lr=0.01)
     growable.attach_optimizer(optimizer)
 
-    # Datos ficticios (entrada = vector de tamaño input_size, salida = vector de tamaño output_size)
     input_size = arch.input_size
     output_size = arch.output_size
     x = torch.randn(10, input_size)
     y = torch.randn(10, output_size)
     criterion = nn.MSELoss()
 
-    # Entrenamiento de ejemplo
     for epoch in range(20):
         optimizer.zero_grad()
         out = model(x)
@@ -754,18 +739,14 @@ if __name__ == "__main__":
         optimizer.step()
         print(f"Epoch {epoch+1:2d}, loss = {loss.item():.6f}")
 
-        # Cada 5 épocas, añadimos un prisma en el nivel 1 (ensanchamiento)
         if (epoch + 1) % 5 == 0:
             print(f"\n--- Crecimiento en época {epoch+1} ---")
-            # Añadir un hexágono en z=1 que comparte arista con el prisma B de ese nivel
             D = hex_neighbor((B[0], B[1], 1.0), 330, radius=R)
-            # Antes de crecer, guardamos el estado del optimizador (opcional)
-            # Realizar crecimiento
-            new_model, new_arch = growable.grow(center=D, radius=R, height=1.0, sides=6)
-            model = new_model  # actualizar referencia
+            # CORRECCIÓN: pasar D como primer argumento posicional
+            new_model, new_arch = growable.grow(D, radius=R, height=1.0, sides=6)
+            model = new_model
             print("Nueva arquitectura:")
             print(new_arch.summary())
-            # El optimizador ya fue actualizado internamente
             print("Optimizador actualizado.\n")
 
     print("\nModelo final:")
@@ -773,7 +754,6 @@ if __name__ == "__main__":
     print("\nArquitectura final:")
     print(growable.architecture.summary())
 
-    # --- Exportar STEP final ---
     try:
         cluster.export_step("crystal_final.step")
     except ImportError as e:
