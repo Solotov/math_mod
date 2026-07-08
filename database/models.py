@@ -38,14 +38,14 @@ class ModelBase(SQLModel):
     optimizer: Optional[str] = None
     loss: Optional[str] = None
     learning_rate: Optional[float] = None
-    estado: str = Field(default="creado")
+    estado: str = Field(default="created")
 
 
 class Model(ModelBase, table=True):
     """Tabla model - información de modelos de ML"""
     id: Optional[int] = Field(default=None, primary_key=True)
-    fecha_creacion: datetime = Field(default_factory=datetime.utcnow)
-    ultima_modificacion: datetime = Field(default_factory=datetime.utcnow)
+    fecha_creacion: datetime = Field(default_factory=datetime.now)
+    ultima_modificacion: datetime = Field(default_factory=datetime.now)
     
     # Relaciones
     training_sessions: List["TrainingSession"] = Relationship(back_populates="modelo")
@@ -96,7 +96,7 @@ class TrainingSessionBase(SQLModel):
 class TrainingSession(TrainingSessionBase, table=True):
     """Tabla training_session - registra sesiones de entrenamiento"""
     id: Optional[int] = Field(default=None, primary_key=True)
-    fecha_inicio: datetime = Field(default_factory=datetime.utcnow, index=True)
+    fecha_inicio: datetime = Field(default_factory=datetime.now, index=True)
     fecha_fin: Optional[datetime] = None
     
     # Relaciones
@@ -216,7 +216,7 @@ class CsvFileBase(SQLModel):
 class CsvFile(CsvFileBase, table=True):
     """Tabla csv_file - registro de archivos CSV"""
     id: Optional[int] = Field(default=None, primary_key=True)
-    fecha: datetime = Field(default_factory=datetime.utcnow, index=True)
+    fecha: datetime = Field(default_factory=datetime.now, index=True)
     
     # Relaciones
     tipo: Optional[Tipo] = Relationship(back_populates="csv_files")
@@ -252,7 +252,7 @@ class PredictionBase(SQLModel):
 class Prediction(PredictionBase, table=True):
     """Tabla prediction - predicciones realizadas"""
     id: Optional[int] = Field(default=None, primary_key=True)
-    fecha: datetime = Field(default_factory=datetime.utcnow, index=True)
+    fecha: datetime = Field(default_factory=datetime.now, index=True)
     
     # Relaciones
     modelo: Optional[Model] = Relationship(back_populates="predictions")
@@ -310,7 +310,7 @@ class EventLogBase(SQLModel):
 class EventLog(EventLogBase, table=True):
     """Tabla event_log - registro de eventos del sistema"""
     id: Optional[int] = Field(default=None, primary_key=True)
-    fecha: datetime = Field(default_factory=datetime.utcnow, index=True)
+    fecha: datetime = Field(default_factory=datetime.now, index=True)
     
     # Relaciones
     modelo: Optional[Model] = Relationship(back_populates="event_logs")

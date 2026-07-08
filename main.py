@@ -2,24 +2,21 @@
 # File: main.py
 # Description: Punto de entrada
 
-from sqlmodel import Session, select
-from sqlalchemy.orm import selectinload
 
+from sqlmodel import Session
 from database.config import engine
-from database.models import Model, ModelWithSessions
-
+from database.models import Model
+from database.repository import Repository
 
 
 with Session(engine) as session:
+    iaModel = Repository[Model](session, Model)
+    one = iaModel.get_by_id(1)
+    if one:
+        print(f"Modelo encontrado: {one.id} - {one.nombre} - {one.estado}")
+    else:
+        item = iaModel.create(Model(nombre="singular-prism",epochs=0,optimizer="adam",loss="categorical_crossentropy",learning_rate=0.001))
+        print(f"Modelo creado: {item.id} - {item.nombre} - {item.estado}")
+        iaModel.update(item.id, {"estado": "entrenando"})
 
-    statement = (
-        select(Model)
-        .options(selectinload(Model.training_sessions))
-        .where(Model.id == 1)
-    )
-
-    modelo = session.exec(statement).one_or_none()
-    assert modelo is not None, "No se encontró el modelo con ID 1"
-    resultado = ModelWithSessions.model_validate(modelo)
-
-print(resultado)
+print("Operación completada.")
